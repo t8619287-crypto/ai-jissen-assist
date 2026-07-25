@@ -4,7 +4,7 @@
 // =====================================================
 
 // キャッシュ(記憶場所)の名前。アプリを更新したらここの数字を上げる
-const CACHE_NAME = "ai-jissen-assist-v3";
+const CACHE_NAME = "ai-jissen-assist-v4";
 
 // 記憶しておくファイル一覧
 const ASSETS = [
@@ -43,6 +43,11 @@ self.addEventListener("activate", (event) => {
 // つながらないときは記憶しておいたファイルを使う(オフライン対応)
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+
+  // AI生成APIなど、このアプリ以外(別ドメイン)への通信は
+  // 一切キャッシュせず、そのままネットワークに任せる
+  const requestUrl = new URL(event.request.url);
+  if (requestUrl.origin !== self.location.origin) return;
 
   event.respondWith(
     fetch(event.request)

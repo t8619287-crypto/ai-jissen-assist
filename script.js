@@ -85,7 +85,11 @@ function showScreen(name) {
   // 画面ごとに最新の内容へ描き直す
   if (name === "home") renderHome();
   if (name === "history") renderHistory();
-  if (name === "post") renderPostSelect();
+  if (name === "post") {
+    renderPostSelect();
+    renderDrafts();
+    renderAiConfigForm();
+  }
 
   window.scrollTo(0, 0);
 }
@@ -970,6 +974,458 @@ function onImportFileChange(event) {
 }
 
 // -----------------------------------------------------
+// AI生成(APIサーバー経由でOpenAIを呼ぶ)
+// - APIキーはこのアプリには存在しない(サーバー側のSecretのみ)
+// - 生成ボタンを押したときだけ、選んだ記録が送信される
+// -----------------------------------------------------
+const AI_CONFIG_KEY = "aiSideJobAiConfig"; // {apiUrl, token}
+const DRAFTS_KEY = "aiSideJobDrafts";
+
+// 日本語を正しく数える文字数カウント(絵文字なども1文字扱いに近づける)
+function countChars(text) {
+  return Array.from(String(text || "")).length;
+}
+
+function loadAiConfig() {
+  try {
+    return JSON.parse(localStorage.getItem(AI_CONFIG_KEY)) || { apiUrl: "", token: "" };
+  } catch (e) {
+    return { apiUrl: "", token: "" };
+  }
+}
+
+function saveAiConfig(config) {
+  localStorage.setItem(AI_CONFIG_KEY, JSON.stringify(config));
+}
+
+function loadDrafts() {
+  try {
+    const drafts = JSON.parse(localStorage.getItem(DRAFTS_KEY));
+    return Array.isArray(drafts) ? drafts : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveDrafts(drafts) {
+  localStorage.setItem(DRAFTS_KEY, JSON.stringify(drafts));
+}
+
+// ---- 設定画面 ----
+function renderAiConfigForm() {
+  const config = loadAiConfig();
+  $("cfg-api-url").value = config.apiUrl || "";
+  $("cfg-api-token").value = config.token || "";
+}
+
+function onConfigSave() {
+  const apiUrl = $("cfg-api-url").value.trim().replace(/\/+$/, ""); // 末尾の / は取る
+  const token = $("cfg-api-token").value.trim();
+  saveAiConfig({ apiUrl, token });
+  showToast("✔ AI生成の設定を保存しました");
+}
+
+async function onConfigTest() {
+  onConfigSave(); // 入力中の値で試せるように、先に保存する
+  const config = loadAiConfig();
+  const status = $("cfg-status");
+  if (!config.apiUrl || !config.token) {
+    status.textContent = "⚠ URLとアクセストークンの両方を入力してください";
+    return;
+  }
+  status.textContent = "接続を確認中…";
+  try {
+    const res = await fetch(config.apiUrl + "/api/health", {
+      headers: { Authorization: "Bearer " + config.token },
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok && data.ok) {
+      status.textContent = `✔ 接続成功!(モデル:${data.model})`;
+    } else {
+      status.textContent = "⚠ " + (data.error || `接続に失敗しました(HTTP ${res.status})`);
+    }
+  } catch (e) {
+    status.textContent = "⚠ APIサーバーに接続できません。URLが正しいか確認してください";
+  }
+}
+
+// ---- 生成の共通処理 ----
+let aiBusy = false; // 連打防止フラグ
+let lastAiRecordId = null; // 下書き保存用に、元になった記録のidを覚えておく
+
+function setAiBusy(busy) {
+  aiBusy = busy;
+  $("ai-status").hidden = !busy;
+  for (const id of ["btn-ai-x", "btn-ai-note", "btn-ai-x-again", "btn-ai-note-again"]) {
+    $(id).disabled = busy;
+  }
+}
+
+function showAiError(message) {
+  const box = $("ai-error");
+  box.textContent = message;
+  box.hidden = false;
+}
+
+function clearAiError() {
+  $("ai-error").hidden = true;
+  $("ai-error").textContent = "";
+}
+
+// APIサーバーへ生成リクエストを送る(自動の再試行はしない)
+async function callGenerateApi(type, record) {
+  const config = loadAiConfig();
+  const payload = {
+    type: type,
+    // コスト対策:必要な項目だけ送る
+    record:
+      type === "x"
+        ? { task: record.task, done: record.done, learn: record.learn, income: record.income, tomorrow: record.tomorrow }
+        : {
+            date: record.date, tools: record.tools, task: record.task, time: record.time,
+            done: record.done, fail: record.fail, learn: record.learn, income: record.income, tomorrow: record.tomorrow,
+          },
+    options: {
+      style: $("ai-style").value,
+      hashtags: $("ai-hashtags").checked,
+      extra: $("ai-extra").value.trim(),
+    },
+  };
+
+  const res = await fetch(config.apiUrl + "/api/generate", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + config.token,
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(90000),
+  });
+
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error((data && data.error) || `生成に失敗しました(HTTP ${res.status})`);
+  }
+  if (!data) {
+    throw new Error("サーバーの返答を読み取れませんでした");
+  }
+  return data;
+}
+
+// 生成前の共通チェック(設定と記録があるか)
+function aiPreflight() {
+  const config = loadAiConfig();
+  if (!config.apiUrl || !config.token) {
+    showAiError(
+      "AI生成が未設定です。この画面の下にある「AI生成の設定」でAPIサーバーのURLとアクセストークンを設定してください(作り方はREADME参照)。設定しない場合も、下の「プロンプト作成(無料の予備機能)」は使えます。"
+    );
+    return null;
+  }
+  const rec = getSelectedRecord();
+  if (!rec) {
+    showAiError("先に「記録を選ぶ」で実践記録を選んでください(記録が無ければ「記録」タブで保存)。");
+    return null;
+  }
+  return rec;
+}
+
+// ---- X投稿文の生成 ----
+async function onAiGenerateX() {
+  if (aiBusy) return;
+  clearAiError();
+  const rec = aiPreflight();
+  if (!rec) return;
+
+  lastAiRecordId = rec.id;
+  setAiBusy(true);
+  $("ai-note-results").hidden = true;
+  try {
+    const data = await callGenerateApi("x", rec);
+    renderXResults(data.posts || []);
+    const stats = loadStats();
+    stats.xPosts += 1;
+    saveStats(stats);
+    showToast("✔ X投稿文を3案生成しました");
+  } catch (e) {
+    showAiError("⚠ " + (e.name === "TimeoutError" ? "生成がタイムアウトしました。もう一度試してください" : e.message));
+  } finally {
+    setAiBusy(false);
+  }
+}
+
+function renderXResults(posts) {
+  const list = $("ai-x-list");
+  list.innerHTML = "";
+
+  posts.forEach((post) => {
+    const card = document.createElement("div");
+    card.className = "ai-x-card";
+
+    const label = document.createElement("span");
+    label.className = "ai-x-label";
+    label.textContent = post.label || "案";
+
+    const textarea = document.createElement("textarea");
+    textarea.rows = 4;
+    textarea.value = post.text || "";
+
+    const count = document.createElement("p");
+    count.className = "ai-x-count";
+
+    const btnRow = document.createElement("div");
+    btnRow.className = "record-btns";
+
+    const btnCopy = document.createElement("button");
+    btnCopy.className = "btn btn-secondary btn-small";
+    btnCopy.textContent = "コピー";
+
+    const btnSave = document.createElement("button");
+    btnSave.className = "btn btn-secondary btn-small";
+    btnSave.textContent = "下書き保存";
+
+    const btnUse = document.createElement("button");
+    btnUse.className = "btn btn-primary btn-small";
+    btnUse.textContent = "投稿画面へ";
+
+    // 文字数の表示と、140文字超のときの投稿ブロック
+    const updateCount = () => {
+      const n = countChars(textarea.value);
+      const over = n > 140;
+      count.textContent = `文字数:${n} / 140` + (over ? " ※140文字を超えているため投稿用にできません" : "");
+      count.classList.toggle("over", over);
+      btnUse.disabled = over;
+    };
+    textarea.addEventListener("input", updateCount);
+    updateCount();
+
+    btnCopy.addEventListener("click", () => {
+      navigator.clipboard
+        .writeText(textarea.value)
+        .then(() => showToast("✔ コピーしました!"))
+        .catch(() => showToast("⚠ コピーできませんでした。文章を選択して手動でコピーしてください"));
+    });
+
+    btnSave.addEventListener("click", () => {
+      addDraft("x", lastAiRecordId, post.text, textarea.value);
+    });
+
+    btnUse.addEventListener("click", () => {
+      if (countChars(textarea.value) > 140) return;
+      $("draft-input").value = textarea.value;
+      updateCharCount();
+      showToast("✔「X投稿文の下書き」に入れました。最終確認して投稿してください");
+      $("draft-input").scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+
+    btnRow.appendChild(btnCopy);
+    btnRow.appendChild(btnSave);
+    btnRow.appendChild(btnUse);
+    card.appendChild(label);
+    card.appendChild(textarea);
+    card.appendChild(count);
+    card.appendChild(btnRow);
+    list.appendChild(card);
+  });
+
+  $("ai-x-results").hidden = posts.length === 0;
+}
+
+// ---- note記事の生成 ----
+async function onAiGenerateNote() {
+  if (aiBusy) return;
+  clearAiError();
+  const rec = aiPreflight();
+  if (!rec) return;
+
+  lastAiRecordId = rec.id;
+  setAiBusy(true);
+  $("ai-x-results").hidden = true;
+  try {
+    const data = await callGenerateApi("note", rec);
+    renderNoteResults(data);
+    const stats = loadStats();
+    stats.notePrompts += 1;
+    saveStats(stats);
+    showToast("✔ note記事を生成しました");
+  } catch (e) {
+    showAiError("⚠ " + (e.name === "TimeoutError" ? "生成がタイムアウトしました。もう一度試してください" : e.message));
+  } finally {
+    setAiBusy(false);
+  }
+}
+
+// 生成結果を1本の記事テキストに組み立てる
+function assembleNoteText(data, title) {
+  const parts = [];
+  parts.push(title || data.recommendedTitle || "");
+  parts.push("");
+  if (data.intro) {
+    parts.push(data.intro);
+    parts.push("");
+  }
+  for (const section of data.sections || []) {
+    parts.push("## " + section.heading);
+    parts.push(section.body);
+    parts.push("");
+  }
+  if (data.summary) {
+    parts.push("## まとめ");
+    parts.push(data.summary);
+    parts.push("");
+  }
+  if (data.nextAction) {
+    parts.push("## 次にやること");
+    parts.push(data.nextAction);
+    parts.push("");
+  }
+  if (data.hashtags && data.hashtags.length > 0) {
+    parts.push(data.hashtags.join(" "));
+  }
+  return parts.join("\n").trim();
+}
+
+function renderNoteResults(data) {
+  const titlesArea = $("ai-note-titles");
+  titlesArea.innerHTML = "";
+
+  for (const title of data.titles || []) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "ai-note-title-btn" + (title === data.recommendedTitle ? " recommended" : "");
+    btn.textContent = (title === data.recommendedTitle ? "★おすすめ " : "") + title;
+    btn.addEventListener("click", () => {
+      // 本文の1行目(タイトル)だけを置き換える
+      const body = $("ai-note-body").value.split("\n");
+      body[0] = title;
+      $("ai-note-body").value = body.join("\n");
+      updateNoteCount();
+      showToast("タイトルを反映しました");
+    });
+    titlesArea.appendChild(btn);
+  }
+
+  $("ai-note-body").value = assembleNoteText(data, data.recommendedTitle);
+  updateNoteCount();
+  $("ai-note-results").hidden = false;
+}
+
+function updateNoteCount() {
+  $("ai-note-count").textContent = countChars($("ai-note-body").value);
+}
+
+// ---- 下書きの保存・一覧 ----
+function addDraft(type, recordId, originalText, editedText) {
+  const drafts = loadDrafts();
+  drafts.push({
+    id: Date.now(),
+    createdAt: new Date().toISOString(),
+    type: type, // "x" または "note"
+    recordId: recordId || null,
+    original: originalText || "", // 生成されたままの文章
+    text: editedText || "", // 選択・編集後の文章
+    charCount: countChars(editedText),
+    posted: false,
+  });
+  saveDrafts(drafts);
+  renderDrafts();
+  showToast("✔ 下書きに保存しました");
+}
+
+function renderDrafts() {
+  const listArea = $("ai-draft-list");
+  const drafts = loadDrafts();
+  listArea.innerHTML = "";
+
+  if (drafts.length === 0) {
+    listArea.innerHTML = '<p class="empty-message">まだ下書きがありません。AI生成した文章を「下書き保存」するとここに残ります。</p>';
+    return;
+  }
+
+  const sorted = [...drafts].sort((a, b) => b.id - a.id);
+  for (const draft of sorted) {
+    const item = document.createElement("div");
+    item.className = "draft-item";
+
+    const head = document.createElement("p");
+    const badge = document.createElement("span");
+    badge.className = "draft-badge " + draft.type;
+    badge.textContent = draft.type === "x" ? "X投稿" : "note";
+    const meta = document.createElement("span");
+    meta.className = "draft-meta";
+    const created = new Date(draft.createdAt);
+    meta.textContent = `${created.getMonth() + 1}/${created.getDate()} ${String(created.getHours()).padStart(2, "0")}:${String(created.getMinutes()).padStart(2, "0")} / ${draft.charCount}文字`;
+    head.appendChild(badge);
+    head.appendChild(meta);
+
+    const text = document.createElement("p");
+    text.className = "draft-text";
+    const excerpt = Array.from(draft.text).slice(0, 60).join("");
+    text.textContent = excerpt + (countChars(draft.text) > 60 ? "…" : "");
+
+    // 投稿済みチェック
+    const postedLabel = document.createElement("label");
+    postedLabel.className = "draft-posted";
+    const postedCheck = document.createElement("input");
+    postedCheck.type = "checkbox";
+    postedCheck.checked = !!draft.posted;
+    postedCheck.addEventListener("change", () => {
+      const all = loadDrafts();
+      const target = all.find((d) => d.id === draft.id);
+      if (target) {
+        target.posted = postedCheck.checked;
+        saveDrafts(all);
+        showToast(postedCheck.checked ? "投稿済みにしました" : "未投稿に戻しました");
+      }
+    });
+    postedLabel.appendChild(postedCheck);
+    postedLabel.appendChild(document.createTextNode("投稿済み"));
+
+    const btnRow = document.createElement("div");
+    btnRow.className = "record-btns";
+
+    const btnCopy = document.createElement("button");
+    btnCopy.className = "btn btn-secondary btn-small";
+    btnCopy.textContent = "全文コピー";
+    btnCopy.addEventListener("click", () => {
+      navigator.clipboard
+        .writeText(draft.text)
+        .then(() => showToast("✔ コピーしました!"))
+        .catch(() => showToast("⚠ コピーできませんでした"));
+    });
+
+    const btnDelete = document.createElement("button");
+    btnDelete.className = "btn btn-danger btn-small";
+    btnDelete.textContent = "削除";
+    let confirmTimer = null;
+    btnDelete.addEventListener("click", () => {
+      if (btnDelete.dataset.confirming !== "true") {
+        btnDelete.dataset.confirming = "true";
+        btnDelete.textContent = "本当に削除?";
+        confirmTimer = setTimeout(() => {
+          btnDelete.dataset.confirming = "false";
+          btnDelete.textContent = "削除";
+        }, 3000);
+        return;
+      }
+      clearTimeout(confirmTimer);
+      saveDrafts(loadDrafts().filter((d) => d.id !== draft.id));
+      renderDrafts();
+      showToast("下書きを削除しました");
+    });
+
+    btnRow.appendChild(btnCopy);
+    btnRow.appendChild(btnDelete);
+
+    item.appendChild(head);
+    item.appendChild(text);
+    item.appendChild(postedLabel);
+    item.appendChild(btnRow);
+    listArea.appendChild(item);
+  }
+}
+
+// -----------------------------------------------------
 // コピー機能
 // -----------------------------------------------------
 function copyText(sourceId) {
@@ -1055,6 +1511,26 @@ document.addEventListener("DOMContentLoaded", () => {
   $("btn-claude-parse").addEventListener("click", onClaudeParse);
   $("btn-claude-apply").addEventListener("click", onClaudeApply);
   $("btn-claude-cancel").addEventListener("click", onClaudeCancel);
+
+  // AI生成
+  $("btn-ai-x").addEventListener("click", onAiGenerateX);
+  $("btn-ai-x-again").addEventListener("click", onAiGenerateX);
+  $("btn-ai-note").addEventListener("click", onAiGenerateNote);
+  $("btn-ai-note-again").addEventListener("click", onAiGenerateNote);
+  $("ai-note-body").addEventListener("input", updateNoteCount);
+  $("btn-ai-note-copy").addEventListener("click", () => copyText("ai-note-body"));
+  $("btn-ai-note-save").addEventListener("click", () => {
+    const text = $("ai-note-body").value;
+    if (!text.trim()) {
+      showToast("⚠ 保存する記事がありません");
+      return;
+    }
+    addDraft("note", lastAiRecordId, "", text);
+  });
+
+  // AI生成の設定
+  $("btn-cfg-save").addEventListener("click", onConfigSave);
+  $("btn-cfg-test").addEventListener("click", onConfigTest);
 
   // 履歴画面(バックアップ)
   $("btn-export").addEventListener("click", onExportClick);

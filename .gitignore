@@ -16,6 +16,7 @@
 !/icon-512.png
 !/README.md
 !/.gitignore
+!/worker/
 
 # 念のための二重ガード(許可リストに入っていなくても明示的に禁止)
 bgm/
@@ -25,3 +26,10 @@ work/
 .claude/
 *.json.bak
 ai-jissen-backup-*.json
+
+# 秘密情報のファイルは絶対にコミットしない
+.dev.vars
+*.dev.vars
+.env
+*.env
+!*.dev.vars.example

@@ -1,0 +1,10 @@
+# ローカル開発用の環境変数サンプル
+# 使い方:このファイルを .dev.vars という名前でコピーして値を書き換える
+#         (.dev.vars は .gitignore で除外済み。GitHubには絶対に上げない)
+#
+# ここには本物の値を書かないこと!
+
+OPENAI_API_KEY="sk-ここに本物のキーを書く(このファイルには書かない)"
+APP_ACCESS_TOKEN="自分で決めた長めのランダムな合言葉"
+OPENAI_MODEL="gpt-5.6-luna"
+ALLOWED_ORIGIN="http://localhost:8765,https://t8619287-crypto.github.io"

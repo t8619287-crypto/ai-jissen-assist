@@ -52,6 +52,68 @@ HTML / CSS / JavaScript だけで動き、記録はあなたのブラウザの�
   - 復元は「既存に追加(重複はスキップ)」と「すべて置き換える」から選べます
   - 壊れたファイルや形式の違うファイルは読み込み前にチェックされ、既存の記録は守られます
 
+## AI生成機能(オプション・API設定が必要)
+
+発信画面の「AIで文章を生成」から、X投稿文3案とnote記事をアプリ内で直接生成できます。
+設定しない場合も、無料の「プロンプト作成」機能はそのまま使えます。
+
+### 仕組みと安全設計
+
+```
+アプリ(GitHub Pages) → 自分のCloudflare Worker → OpenAI API
+```
+
+- **OpenAI APIキーは Cloudflare Worker の Secret にだけ保存**します。アプリ・リポジトリ・ブラウザには一切置きません
+- Workerは、自分で決めた合言葉(`APP_ACCESS_TOKEN`)が一致するリクエストだけを受け付けます
+- CORSで、許可したサイト(このアプリのURL)以外のブラウザからの利用を拒否します
+- 生成ボタンを押したときだけ、選んだ記録がWorker経由でOpenAIへ送信されます
+
+### 料金について(重要)
+
+- OpenAI APIの利用料金は、**ChatGPT(Plus等)の契約とは別の従量課金**です
+- 必ずOpenAIの管理画面で利用上限を設定してください:
+  [platform.openai.com](https://platform.openai.com) → Settings → Billing → **Usage limits** で月の上限額を設定
+- このアプリ側でも、1回の生成の出力量を制限し、ボタン連打を防止し、自動再試行をしない設計にしています
+
+### セットアップ手順(Cloudflareダッシュボード方式・コマンド不要)
+
+1. [dash.cloudflare.com](https://dash.cloudflare.com) で無料アカウントを作成(自分で行う)
+2. 左メニュー「Workers & Pages」→「Create」→「Create Worker」→ 名前を `ai-jissen-assist-api` にして「Deploy」
+3. 「Edit code」を開き、中身をすべて削除して、このリポジトリの `worker/worker.js` の内容を貼り付け →「Deploy」
+4. Workerの「Settings」→「Variables and Secrets」で以下を登録:
+   - `OPENAI_API_KEY`(**Secret**):OpenAIの管理画面で発行したAPIキー(自分で入力)
+   - `APP_ACCESS_TOKEN`(**Secret**):自分で決めた長いランダムな合言葉(例:パスワード生成ツールで32文字)
+   - `OPENAI_MODEL`(Text):`gpt-5.6-luna`(あとから変更可能)
+   - `ALLOWED_ORIGIN`(Text):`https://t8619287-crypto.github.io`
+5. Workerの URL(`https://ai-jissen-assist-api.xxxx.workers.dev`)を控える
+6. アプリの発信画面 →「AI生成の設定」→ WorkerのURLと`APP_ACCESS_TOKEN`と同じ合言葉を入力 → 保存 →「接続テスト」
+
+### ローカル開発(APIキー不要のモック)
+
+料金をかけずに動作確認したいときは、モックサーバーを使えます:
+
+```
+python worker/mock_server.py
+```
+
+アプリの設定に URL `http://localhost:8787` / トークン `test-token` を入れると、AIを呼ばずに動作を試せます。
+
+wrangler CLI を使う場合は、`worker/.dev.vars.example` を `.dev.vars` にコピーして値を設定してください(`.dev.vars` はGitに入りません)。
+
+### アクセストークン方式の限界
+
+`APP_ACCESS_TOKEN` はブラウザのlocalStorageに保存されるため、この端末を他人が操作できる場合は保護になりません。あくまで「公開URLを第三者に勝手に使われない」ための個人利用向けの簡易認証です。トークンが漏れた疑いがあれば、WorkerのSecretを新しい値に変えれば古いトークンは使えなくなります。
+
+### トラブル時の確認
+
+| 症状 | 確認すること |
+|---|---|
+| 「アクセストークンが正しくありません」 | アプリ設定のトークンとWorkerの`APP_ACCESS_TOKEN`が完全一致しているか |
+| 「Origin不一致」 | Workerの`ALLOWED_ORIGIN`にアプリのURL(`https://t8619287-crypto.github.io`)があるか |
+| 「APIサーバーに接続できません」 | WorkerのURLが正しいか、Workerがデプロイされているか |
+| 「OpenAI APIキー設定に問題」 | Workerの`OPENAI_API_KEY`(Secret)が正しいか |
+| 生成が遅い・失敗する | Workerの「Logs」タブでエラーを確認(キーは表示されません) |
+
 ## 公開場所と更新方法
 
 このアプリは GitHub Pages で公開されています。
