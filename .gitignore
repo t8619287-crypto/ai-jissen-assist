@@ -1,0 +1,27 @@
+# ============================================
+# 公開する8ファイル以外はすべて除外する設定
+# (先に全部除外してから、公開するものだけ許可する方式)
+# ============================================
+
+# まずすべてを除外
+/*
+
+# 公開するファイルだけを許可(!は「除外しない」の意味)
+!/index.html
+!/style.css
+!/script.js
+!/manifest.json
+!/service-worker.js
+!/icon-192.png
+!/icon-512.png
+!/README.md
+!/.gitignore
+
+# 念のための二重ガード(許可リストに入っていなくても明示的に禁止)
+bgm/
+clips/
+output/
+work/
+.claude/
+*.json.bak
+ai-jissen-backup-*.json
