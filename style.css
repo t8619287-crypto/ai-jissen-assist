@@ -356,6 +356,39 @@ select {
   font-weight: bold;
 }
 
+/* ===== 作業セッション ===== */
+.session-timer {
+  font-size: 2.1rem;
+  font-weight: bold;
+  color: var(--blue);
+  text-align: center;
+  font-variant-numeric: tabular-nums; /* 数字の幅をそろえてチラつきを防ぐ */
+  line-height: 1.3;
+}
+
+.session-meta {
+  text-align: center;
+  color: var(--text-sub);
+  font-size: 0.85rem;
+  margin-bottom: 10px;
+}
+
+.finish-duration-line {
+  font-size: 0.95rem;
+  margin-top: 4px;
+}
+
+.finish-duration-line strong {
+  color: var(--blue);
+}
+
+/* ===== Claude結果の取り込み ===== */
+.claude-preview-list {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 6px;
+}
+
 /* ===== バックアップ(復元)===== */
 .restore-box {
   margin-top: 16px;

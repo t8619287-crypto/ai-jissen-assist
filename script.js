@@ -119,9 +119,317 @@ function parseHoursText(str) {
 }
 
 // -----------------------------------------------------
+// 作業セッション(開始・経過時間・終了)
+// -----------------------------------------------------
+// 開始時刻そのものを localStorage に保存するので、
+// ブラウザを閉じても「今の時刻 − 開始時刻」で計測が続く
+const SESSION_KEY = "aiSideJobSession";
+
+// 終了確認パネルを開いているかどうか(画面上の状態なので保存はしない)
+let finishPanelOpen = false;
+
+function loadSession() {
+  try {
+    return JSON.parse(localStorage.getItem(SESSION_KEY));
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveSession(session) {
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+}
+
+function clearSession() {
+  localStorage.removeItem(SESSION_KEY);
+}
+
+// ミリ秒の時刻 → 「14:05」のような表示
+function toHM(ms) {
+  const d = new Date(ms);
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
+
+// 分 → 「1時間24分」のような表示
+function formatMinutes(mins) {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h > 0 && m > 0) return `${h}時間${m}分`;
+  if (h > 0) return `${h}時間`;
+  return `${m}分`;
+}
+
+// セッションカードの表示を状態に合わせて切り替える
+function renderSessionCard() {
+  const session = loadSession();
+  $("session-idle").hidden = !!session;
+  $("session-active").hidden = !session || finishPanelOpen;
+  $("session-finish").hidden = !session || !finishPanelOpen;
+
+  if (session && !finishPanelOpen) {
+    $("session-meta").textContent = `${session.tool} / ${toHM(session.startedAt)} 開始`;
+    $("session-start-edit").value = toHM(session.startedAt);
+    updateElapsed();
+  }
+}
+
+// 経過時間の表示を更新(1秒ごとに呼ばれる)
+function updateElapsed() {
+  const session = loadSession();
+  if (!session) return;
+  const sec = Math.max(0, Math.floor((Date.now() - session.startedAt) / 1000));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  $("session-elapsed").textContent = `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+// 「▶ 作業開始」
+function onSessionStart() {
+  saveSession({
+    date: isoToday(),
+    startedAt: Date.now(),
+    tool: $("session-tool").value,
+  });
+  renderSessionCard();
+  showToast("▶ 作業を開始しました");
+}
+
+// 作業中の開始時刻の修正
+function onSessionStartEdit() {
+  const session = loadSession();
+  if (!session) return;
+  const value = $("session-start-edit").value; // 「14:05」形式
+  if (!value) return;
+  const [h, m] = value.split(":").map(Number);
+  const d = new Date(session.startedAt);
+  d.setHours(h, m, 0, 0);
+  if (d.getTime() > Date.now()) {
+    showToast("⚠ 開始時刻を未来にはできません");
+    $("session-start-edit").value = toHM(session.startedAt);
+    return;
+  }
+  session.startedAt = d.getTime();
+  saveSession(session);
+  renderSessionCard();
+  showToast("開始時刻を修正しました");
+}
+
+// 「■ 作業終了」→ 確認パネルを開く
+function onSessionStop() {
+  const session = loadSession();
+  if (!session) return;
+  finishPanelOpen = true;
+  $("finish-start").value = toHM(session.startedAt);
+  $("finish-end").value = toHM(Date.now());
+  updateFinishDuration();
+  renderSessionCard();
+}
+
+// 確認パネルの開始・終了時刻から作業時間(分)を計算
+function finishMinutes() {
+  const sv = $("finish-start").value;
+  const ev = $("finish-end").value;
+  if (!sv || !ev) return null;
+  const [sh, sm] = sv.split(":").map(Number);
+  const [eh, em] = ev.split(":").map(Number);
+  return eh * 60 + em - (sh * 60 + sm);
+}
+
+function updateFinishDuration() {
+  const mins = finishMinutes();
+  $("finish-duration").textContent =
+    mins === null || mins < 0 ? "⚠ 終了時刻が開始時刻より前です" : formatMinutes(mins);
+}
+
+// 「この内容で記録フォームへ」
+function onFinishConfirm() {
+  const session = loadSession();
+  if (!session) return;
+  const mins = finishMinutes();
+  if (mins === null || mins < 0) {
+    showToast("⚠ 終了時刻が開始時刻より前になっています");
+    return;
+  }
+  clearForm();
+  $("in-date").value = session.date;
+  $("in-tools").value = session.tool;
+  $("in-time").value = formatMinutes(mins);
+  $("in-income").value = "0円"; // 収益の初期値
+  clearSession();
+  finishPanelOpen = false;
+  showScreen("record");
+  showToast("✔ 作業時間を入力しました。残りを書いて保存してください");
+}
+
+// 「計測を続ける」
+function onFinishResume() {
+  finishPanelOpen = false;
+  renderSessionCard();
+}
+
+// 「セッションを破棄」(押し間違い防止の2回タップ方式)
+let discardConfirmTimer = null;
+
+function onFinishDiscard() {
+  const btn = $("btn-finish-discard");
+  if (btn.dataset.confirming !== "true") {
+    btn.dataset.confirming = "true";
+    btn.textContent = "本当に破棄?";
+    discardConfirmTimer = setTimeout(() => {
+      btn.dataset.confirming = "false";
+      btn.textContent = "セッションを破棄";
+    }, 3000);
+    return;
+  }
+  clearTimeout(discardConfirmTimer);
+  btn.dataset.confirming = "false";
+  btn.textContent = "セッションを破棄";
+  clearSession();
+  finishPanelOpen = false;
+  renderSessionCard();
+  showToast("セッションを破棄しました");
+}
+
+// -----------------------------------------------------
+// Claude結果の取り込み(貼り付け → 確認 → フォームに反映)
+// -----------------------------------------------------
+
+// 貼り付けた文章からJSON部分だけを取り出す
+// (前後に説明文や ``` が付いていても読めるようにする)
+function extractJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    // そのまま読めなければ、最初の { から最後の } までを試す
+  }
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+  try {
+    return JSON.parse(text.slice(start, end + 1));
+  } catch (e) {
+    return null;
+  }
+}
+
+// 配列や文字列を「・項目1 ・項目2」の複数行テキストにそろえる
+function toLines(value) {
+  if (Array.isArray(value)) {
+    return value
+      .filter((v) => typeof v === "string" || typeof v === "number")
+      .map((v) => "・" + v)
+      .join("\n");
+  }
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  return "";
+}
+
+// 完了報告を読み取り、フォーム項目への対応表を作る
+// 読み取れなければ null を返す(データにも入力欄にも触れない)
+function parseClaudeReport(text) {
+  const data = extractJson(text);
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+
+  // problems(問題)と fixes(修正)は「失敗したこと」欄にまとめる
+  const problems = toLines(data.problems);
+  const fixes = toLines(data.fixes);
+  let fail = "";
+  if (problems && fixes) fail = "【問題】\n" + problems + "\n【修正】\n" + fixes;
+  else fail = problems || fixes;
+
+  const mapped = {
+    tools: typeof data.tool === "string" ? data.tool : "",
+    task: typeof data.task === "string" ? data.task : "",
+    done: toLines(data.completed),
+    fail: fail,
+    learn: toLines(data.learnings),
+    tomorrow: typeof data.nextAction === "string" ? data.nextAction : toLines(data.nextAction),
+    income:
+      typeof data.revenue === "number" && Number.isFinite(data.revenue)
+        ? data.revenue + "円"
+        : "0円",
+  };
+
+  // 意味のある中身がひとつも無ければ失敗扱いにする
+  if (!mapped.task && !mapped.done && !mapped.learn) return null;
+  return mapped;
+}
+
+// 確認待ちの読み取り結果(「フォームに反映」を押すまでここに保持するだけ)
+let pendingClaudeImport = null;
+
+// 「読み取る」ボタン
+function onClaudeParse() {
+  const text = $("claude-input").value.trim();
+  if (!text) {
+    showToast("⚠ 完了報告を貼り付けてください");
+    return;
+  }
+  const mapped = parseClaudeReport(text);
+  if (!mapped) {
+    showToast("⚠ JSON形式の完了報告として読み取れませんでした");
+    return;
+  }
+
+  // 確認画面に対応表を表示する
+  pendingClaudeImport = mapped;
+  const list = $("claude-preview-list");
+  list.innerHTML = "";
+  const rows = [
+    ["使用したAIツール", mapped.tools],
+    ["取り組んだ作業", mapped.task],
+    ["できたこと", mapped.done],
+    ["失敗したこと", mapped.fail],
+    ["学んだこと", mapped.learn],
+    ["明日やること", mapped.tomorrow],
+    ["今日の収益", mapped.income],
+  ];
+  for (const [label, value] of rows) {
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+    dd.textContent = value || "(空欄のまま)";
+    list.appendChild(dt);
+    list.appendChild(dd);
+  }
+  $("claude-preview").hidden = false;
+}
+
+// 「フォームに反映」ボタン(ここでも保存はしない)
+function onClaudeApply() {
+  if (!pendingClaudeImport) return;
+  if (editingRecordId) {
+    showToast("⚠ 編集中は取り込めません。先に編集をキャンセルしてください");
+    return;
+  }
+  const m = pendingClaudeImport;
+  if (m.tools) $("in-tools").value = m.tools;
+  if (m.task) $("in-task").value = m.task;
+  if (m.done) $("in-done").value = m.done;
+  if (m.fail) $("in-fail").value = m.fail;
+  if (m.learn) $("in-learn").value = m.learn;
+  if (m.tomorrow) $("in-tomorrow").value = m.tomorrow;
+  if (!$("in-income").value) $("in-income").value = m.income;
+  onClaudeCancel();
+  showToast("✔ フォームに反映しました。内容を確認して保存してください");
+}
+
+// 「やめる」ボタン
+function onClaudeCancel() {
+  pendingClaudeImport = null;
+  $("claude-preview").hidden = true;
+  $("claude-preview-list").innerHTML = "";
+  $("claude-input").value = "";
+}
+
+// -----------------------------------------------------
 // ① ホーム画面
 // -----------------------------------------------------
 function renderHome() {
+  renderSessionCard(); // 作業セッションカードも最新の状態にする
+
   const records = loadRecords();
   const stats = loadStats();
   const today = isoToday();
@@ -728,6 +1036,25 @@ document.addEventListener("DOMContentLoaded", () => {
     clearForm();
     showToast("編集をキャンセルしました");
   });
+
+  // 作業セッション
+  $("btn-session-start").addEventListener("click", onSessionStart);
+  $("session-start-edit").addEventListener("change", onSessionStartEdit);
+  $("btn-session-stop").addEventListener("click", onSessionStop);
+  $("finish-start").addEventListener("change", updateFinishDuration);
+  $("finish-end").addEventListener("change", updateFinishDuration);
+  $("btn-finish-confirm").addEventListener("click", onFinishConfirm);
+  $("btn-finish-resume").addEventListener("click", onFinishResume);
+  $("btn-finish-discard").addEventListener("click", onFinishDiscard);
+  // 1秒ごとに経過時間の表示を更新する
+  setInterval(() => {
+    if (!finishPanelOpen && loadSession()) updateElapsed();
+  }, 1000);
+
+  // Claude結果の取り込み
+  $("btn-claude-parse").addEventListener("click", onClaudeParse);
+  $("btn-claude-apply").addEventListener("click", onClaudeApply);
+  $("btn-claude-cancel").addEventListener("click", onClaudeCancel);
 
   // 履歴画面(バックアップ)
   $("btn-export").addEventListener("click", onExportClick);

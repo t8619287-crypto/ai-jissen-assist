@@ -58,6 +58,56 @@
       </div>
       <p class="stat-note">※note記事・X投稿は、このアプリでプロンプトを作成した回数です</p>
 
+      <!-- 作業セッション -->
+      <section class="card">
+        <h2>作業セッション</h2>
+
+        <!-- 作業していないとき -->
+        <div id="session-idle">
+          <label>
+            使うAIツール
+            <select id="session-tool">
+              <option>Claude</option>
+              <option>Claude Code</option>
+              <option>ChatGPT</option>
+              <option>Gemini</option>
+              <option>その他</option>
+            </select>
+          </label>
+          <button id="btn-session-start" class="btn btn-primary btn-block">▶ 作業開始</button>
+        </div>
+
+        <!-- 作業中 -->
+        <div id="session-active" hidden>
+          <p class="session-timer" id="session-elapsed">0:00:00</p>
+          <p class="session-meta" id="session-meta"></p>
+          <label>
+            開始時刻の修正(押し間違えたとき用)
+            <input type="time" id="session-start-edit">
+          </label>
+          <button id="btn-session-stop" class="btn btn-primary btn-block">■ 作業終了</button>
+        </div>
+
+        <!-- 終了の確認 -->
+        <div id="session-finish" hidden>
+          <p class="restore-title">セッション終了の確認(時刻は修正できます)</p>
+          <label>
+            開始時刻
+            <input type="time" id="finish-start">
+          </label>
+          <label>
+            終了時刻
+            <input type="time" id="finish-end">
+          </label>
+          <p class="finish-duration-line">合計作業時間:<strong id="finish-duration">0分</strong></p>
+          <button id="btn-finish-confirm" class="btn btn-primary btn-block">この内容で記録フォームへ</button>
+          <div class="btn-row">
+            <button id="btn-finish-resume" class="btn btn-secondary">計測を続ける</button>
+            <button id="btn-finish-discard" class="btn btn-danger">セッションを破棄</button>
+          </div>
+        </div>
+      </section>
+
       <section class="card">
         <h2>最近の活動</h2>
         <div id="recent-list"></div>
@@ -73,6 +123,24 @@
         <span id="edit-banner-text">編集中</span>
         <button id="btn-cancel-edit" class="btn-link" type="button">キャンセル</button>
       </div>
+
+      <!-- Claude結果の取り込み -->
+      <section class="card">
+        <h2>Claudeの完了報告を取り込む</h2>
+        <p class="hint">Claude Codeが出力したJSON形式の完了報告を貼り付けると、下のフォームに自動入力できます(保存はされません)。</p>
+        <textarea id="claude-input" rows="4" placeholder='ここに完了報告(JSON)を貼り付け'></textarea>
+        <button id="btn-claude-parse" class="btn btn-secondary btn-block">読み取る</button>
+
+        <!-- 読み取り結果の確認画面 -->
+        <div id="claude-preview" hidden>
+          <p class="restore-title">読み取り結果の確認</p>
+          <dl class="record-detail claude-preview-list" id="claude-preview-list"></dl>
+          <div class="btn-row">
+            <button id="btn-claude-apply" class="btn btn-primary">フォームに反映</button>
+            <button id="btn-claude-cancel" class="btn btn-secondary">やめる</button>
+          </div>
+        </div>
+      </section>
 
       <section class="card">
         <h2>基本情報</h2>
