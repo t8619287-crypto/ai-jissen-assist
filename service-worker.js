@@ -4,7 +4,7 @@
 // =====================================================
 
 // キャッシュ(記憶場所)の名前。アプリを更新したらここの数字を上げる
-const CACHE_NAME = "ai-jissen-assist-v4";
+const CACHE_NAME = "ai-jissen-assist-v5";
 
 // 記憶しておくファイル一覧
 const ASSETS = [

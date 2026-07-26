@@ -202,61 +202,8 @@
         <select id="post-record-select"></select>
       </section>
 
-      <!-- AIで文章を生成 -->
       <section class="card">
-        <h2>AIで文章を生成</h2>
-        <p class="hint">選んだ記録から、アプリ内で直接文章を作ります(下の「AI生成の設定」が必要です)。<br>
-        <strong>生成ボタンを押したときだけ</strong>、選んだ記録と補足情報が、自分で用意したAPIサーバー経由でOpenAIへ送信されます。</p>
-
-        <label>
-          文体
-          <select id="ai-style">
-            <option value="standard">標準(自然なです・ます)</option>
-            <option value="casual">カジュアル</option>
-            <option value="polite">ていねい</option>
-          </select>
-        </label>
-        <label class="radio-label">
-          <input type="checkbox" id="ai-hashtags" checked>
-          <span>ハッシュタグを付ける(#AI副業 など)</span>
-        </label>
-        <label>
-          補足情報(任意)
-          <textarea id="ai-extra" rows="2" placeholder="例:今日は初めてClaude Codeを使った"></textarea>
-        </label>
-
-        <div class="btn-row">
-          <button id="btn-ai-x" class="btn btn-primary">X投稿文をAI生成</button>
-          <button id="btn-ai-note" class="btn btn-primary">note記事をAI生成</button>
-        </div>
-        <p id="ai-status" class="ai-status" hidden>⏳ AIが文章を生成中です…(10〜30秒ほど)</p>
-        <div id="ai-error" class="ai-error" hidden></div>
-
-        <!-- X投稿文3案 -->
-        <div id="ai-x-results" hidden>
-          <p class="restore-title">X投稿文の3案(そのまま編集できます)</p>
-          <div id="ai-x-list"></div>
-          <button id="btn-ai-x-again" class="btn btn-secondary btn-block">別の3案を再生成</button>
-        </div>
-
-        <!-- note記事 -->
-        <div id="ai-note-results" hidden>
-          <p class="restore-title">タイトル案(タップで本文の先頭に反映)</p>
-          <div id="ai-note-titles"></div>
-          <p class="restore-title">記事本文(そのまま編集できます)</p>
-          <textarea id="ai-note-body" rows="14"></textarea>
-          <p class="char-count">文字数:<span id="ai-note-count">0</span> 文字</p>
-          <div class="btn-row">
-            <button id="btn-ai-note-copy" class="btn btn-primary">記事をコピー</button>
-            <button id="btn-ai-note-save" class="btn btn-secondary">下書き保存</button>
-          </div>
-          <button id="btn-ai-note-again" class="btn btn-secondary btn-block">再生成</button>
-        </div>
-      </section>
-
-      <section class="card">
-        <h2>プロンプト作成(無料の予備機能)</h2>
-        <p class="hint">API設定なしで使えます。生成したプロンプトをChatGPTなどに貼り付けて使ってください。</p>
+        <h2>プロンプト作成</h2>
         <div class="btn-row">
           <button id="btn-note" class="btn btn-secondary">note記事用</button>
           <button id="btn-post" class="btn btn-secondary">X投稿用</button>
@@ -296,32 +243,6 @@
           <button id="btn-open-x" class="btn btn-x">Xの投稿画面を開く</button>
         </div>
         <p class="hint">※Xの公式投稿画面を開くだけです。投稿するかどうかは必ず自分で決めてください。</p>
-      </section>
-
-      <!-- 保存した下書き -->
-      <section class="card">
-        <h2>保存した下書き</h2>
-        <div id="ai-draft-list"></div>
-      </section>
-
-      <!-- AI生成の設定 -->
-      <section class="card">
-        <h2>AI生成の設定</h2>
-        <p class="hint">自分で用意したAPIサーバー(Cloudflare Worker)のURLと、自分で決めたアクセストークンを設定します。作り方はREADMEに書いてあります。<br>
-        トークンは<strong>この端末のブラウザ内にだけ</strong>保存されます(OpenAIのAPIキーはここには入力しません)。</p>
-        <label>
-          APIサーバーのURL
-          <input type="url" id="cfg-api-url" placeholder="https://xxxx.workers.dev">
-        </label>
-        <label>
-          アクセストークン
-          <input type="password" id="cfg-api-token" placeholder="自分で決めた合言葉">
-        </label>
-        <div class="btn-row">
-          <button id="btn-cfg-save" class="btn btn-primary">設定を保存</button>
-          <button id="btn-cfg-test" class="btn btn-secondary">接続テスト</button>
-        </div>
-        <p id="cfg-status" class="hint"></p>
       </section>
     </section>
 
